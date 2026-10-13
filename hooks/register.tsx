@@ -13,6 +13,8 @@ const ACCENT = '#4e9af1'
 const LIT = '#9cc8ff'
 const WASH = '#1f3a5f'
 const shown = atom({ plugin: 'markdown-pane', key: 'shown' } as const, null)
+/** The last call that wrote or edited each Markdown file: only its row keeps the button, so many edits leave one. */
+const lastWrite = atom({ plugin: 'markdown-pane', key: 'lastWrite' } as const, {} as Record<string, string>)
 
 const DESCRIPTION = [
   'Shows a Markdown file rendered in the side pane, for the person to read.',
@@ -113,6 +115,7 @@ export const register: Register = on => {
     if (ran.deny !== undefined || ran.isError || !isMarkdown(e.file_path)) return ran
     // The file is written: nothing the pane does may fail the call.
     try {
+      await update($, lastWrite, last => ({ ...last, [e.file_path]: e.tool_use_id }))
       const now = await read($, shown)
       if (now?.path === e.file_path) await load($, e.file_path)
       else if (!isPrivate(e.file_path)) await open($, e.file_path)
@@ -125,6 +128,7 @@ export const register: Register = on => {
     const ran = await next(e)
     if (ran.deny !== undefined || ran.isError) return ran
     try {
+      if (isMarkdown(e.file_path)) await update($, lastWrite, last => ({ ...last, [e.file_path]: e.tool_use_id }))
       if ((await read($, shown))?.path === e.file_path) await load($, e.file_path)
     } catch {}
 
@@ -145,12 +149,15 @@ export const register: Register = on => {
     )
   })
 
-  // Under the result of a call that wrote or edited a Markdown file: a button that opens it, drawn to be seen.
+  // Under the result of the last call that wrote or edited a Markdown file: a button that opens it, drawn to be seen.
+  // A file written again moves its button down to the newer row. A file not written this session (a resumed one) keeps every row's.
   for (const tool of ['Write', 'Edit'] as const) {
     on('ui.render', { component: 'ToolResult', props: { tool } }, async ($, e, next) => {
       const result = await next(e)
       const path = (e.props.output as { filePath?: unknown } | null | undefined)?.filePath
       if (!isMarkdown(path) || e.props.isErrored) return result
+      const last = (await read($, lastWrite))[path]
+      if (last !== undefined && last !== e.requestId) return result
       const { Box, Button } = $.ui.resolve(e)
 
       return (
