@@ -5,7 +5,7 @@ const SHOW = 'mcp__markdown-pane__show'
 const PANE = { title: 'report.md', isFocused: false, bodyColumns: 60, placement: 'dock' } as never
 
 /** What the engine would do beneath the mod: files by path, a pane that opens, and a Write or Edit that lands. */
-const world = (on: On, files: Record<string, string>, isWide = true) => {
+const world = (on: On, files: Record<string, string>, isWide = true, ids: string[] = []) => {
   const opened: string[] = []
   on('fs.read', (_, e) => {
     const text = files[(e as { path: string }).path]
@@ -27,7 +27,8 @@ const world = (on: On, files: Record<string, string>, isWide = true) => {
     return { value: isWide ? { isPlaced: true } : { isPlaced: false, reason: 'narrow' } } as never
   })
   on('tool.call', (_, e) => {
-    const call = e as { tool: string; file_path?: string; content?: string }
+    const call = e as { tool: string; tool_use_id: string; file_path?: string; content?: string }
+    ids.push(call.tool_use_id)
     if (call.tool === 'Write' && call.file_path !== undefined) files[call.file_path] = call.content ?? ''
 
     return { result: {} } as never
@@ -116,6 +117,31 @@ test('under the result of a call that wrote a Markdown file is a framed button t
   for (const other of [await result('call-2', '/work/app.ts'), await result('call-3', '/work/plan.md', true)]) {
     expect(await other.find({ type: 'Button' })).toBeUndefined()
     await other.unmount()
+  }
+})
+
+test('a file written and edited again keeps one button, on the last row, even past rows the session did not see', async ($, on) => {
+  const ids: string[] = []
+  const files = { '/work/spec.md': '# Spec' }
+  world(on, files, true, ids)
+  on('ui.render', { component: 'ToolResult' }, ($$, e) => {
+    const { Text } = $$.ui.resolve(e)
+
+    return <Text>the engine's result</Text>
+  })
+  await $.tool.call({ tool: 'Write', file_path: '/work/spec.md', content: '# Spec' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/work/spec.md', old_string: 'Spec', new_string: 'Spec v2' } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/work/spec.md', old_string: 'v2', new_string: 'v3' } as never)
+  expect(new Set(ids).size).toBe(3)
+  const row = (id: string, tool: string) =>
+    $.ui.mount({ plugin: 'markdown-pane', surface: 'terminal', component: 'ToolResult', requestId: id, props: { tool_use_id: id, tool, output: { filePath: '/work/spec.md' }, isErrored: false } })
+
+  const rows = [await row(ids[0]!, 'Write'), await row(ids[1]!, 'Edit'), await row(ids[2]!, 'Edit'), await row('resumed-1', 'Edit')]
+  const buttons = await Promise.all(rows.map(async ui => (await ui.find({ type: 'Button' })) !== undefined))
+  expect(buttons).toEqual([false, false, true, false])
+  for (const ui of rows) {
+    expect(await ui.find({ type: 'Text', text: "the engine's result" })).toBeDefined()
+    await ui.unmount()
   }
 })
 

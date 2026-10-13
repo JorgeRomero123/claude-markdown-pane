@@ -12,6 +12,8 @@ declare module 'claude-code' {
     'markdown-pane': {
       /** The file the pane shows; null before any was opened. */
       shown: MarkdownPaneFile | null
+      /** Per Markdown file path, the tool_use_id of the last Write or Edit to it this session. */
+      lastWrite: Record<string, string>
     }
   }
 }
